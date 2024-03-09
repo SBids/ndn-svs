@@ -80,11 +80,14 @@ suppressionCurve(int constFactor, int value)
 void
 SVSyncCore::sendInitialInterest()
 {
+  // add m_id to hashNameMap
+  hashNameMap.insert(std::pair<std::size_t,ndn::Name>(URI_hash(m_id.toUri()),m_id));
+  
   // Wait for 100ms before sending the first sync interest
   // This is necessary to give other things time to initialize
   m_scheduler.schedule(100_ms, [this] {
     m_initialized = true;
-    retxSyncInterest(true, 0);
+    retxSyncInterest(true, 0, false);
   });
 }
 
@@ -135,6 +138,34 @@ SVSyncCore::onSyncInterestValidated(const Interest& interest)
   {
     ndn::Block vvBlock = n.get(-2);
 
+    // turn tlv::StateVectorHash into tlv::StateVector
+    if (vvBlock.type() == tlv::StateVectorHash)
+    {
+      std::shared_ptr<VersionVectorHash> vvHashOther;
+      vvHashOther = std::make_shared<VersionVectorHash>(vvBlock);
+      vvOther = std::make_shared<VersionVector>();
+      // check whether all the hash values are known
+      bool allHashKnown = true;
+      for (const auto& it : *vvHashOther){
+        if (hashNameMap.find(it.first) == hashNameMap.end()){
+          allHashKnown = false;
+        }
+      }
+      if (allHashKnown){
+        // If all hash values are known, turn tlv::StateVectorHash to tlv::StateVector
+        for (const auto& it : *vvHashOther){
+          auto hashName = hashNameMap.find(it.first);
+          vvOther->set(hashName->second,it.second);
+        }
+      } else {
+        // if not, send a sync interest in tlv::StateVector and then return; 
+        retxSyncInterest(true, 0, false);
+        return;
+      }
+      
+      
+    }
+
     // Decompress if necessary
     if (vvBlock.type() == tlv::StateVectorLzma) {
 #ifdef NDN_SVS_COMPRESSION
@@ -153,7 +184,20 @@ SVSyncCore::onSyncInterestValidated(const Interest& interest)
 #endif
     }
 
-    vvOther = std::make_shared<VersionVector>(vvBlock);
+    if (vvBlock.type() == tlv::StateVector){
+      vvOther = std::make_shared<VersionVector>(vvBlock);
+      // add new names to hash->name map；
+      for(const auto& it:*vvOther){
+        hashNameMap[URI_hash(it.first.toUri())] = it.first;
+      }
+      // if there’s a name in local hash->name map but not in the sync interest, send a sync interest in tlv::StateVector
+      for(const auto& it:hashNameMap){
+        if(!vvOther->has(it.second)){
+          retxSyncInterest(false, 0, false);
+        }
+      }
+    }
+    
   }
   catch (ndn::tlv::Error&)
   {
@@ -191,7 +235,7 @@ SVSyncCore::onSyncInterestValidated(const Interest& interest)
   // If incoming state is older, send sync interest immediately
   if (!myVectorNew)
   {
-    retxSyncInterest(false, 0);
+    retxSyncInterest(false, 0, true);
   }
   else
   {
@@ -206,13 +250,13 @@ SVSyncCore::onSyncInterestValidated(const Interest& interest)
 
     if (getCurrentTime() + delay * 1000 < m_nextSyncInterest)
     {
-      retxSyncInterest(false, delay);
+      retxSyncInterest(false, delay, true);
     }
   }
 }
 
 void
-SVSyncCore::retxSyncInterest(bool send, unsigned int delay)
+SVSyncCore::retxSyncInterest(bool send, unsigned int delay, bool isStateVectorHash)
 {
   if (send)
   {
@@ -221,7 +265,7 @@ SVSyncCore::retxSyncInterest(bool send, unsigned int delay)
     // Only send interest if in steady state or local vector has newer state
     // than recorded interests
     if (!m_recordedVv || std::get<0>(mergeStateVector(*m_recordedVv)))
-      sendSyncInterest();
+      sendSyncInterest(isStateVectorHash);
     m_recordedVv = nullptr;
   }
 
@@ -235,12 +279,12 @@ SVSyncCore::retxSyncInterest(bool send, unsigned int delay)
     m_nextSyncInterest = getCurrentTime() + 1000 * delay;
 
     m_retxEvent = m_scheduler.schedule(time::milliseconds(delay),
-                                       [this] { retxSyncInterest(true, 0); });
+                                       [this, isStateVectorHash] { retxSyncInterest(true, 0, isStateVectorHash); });
   }
 }
 
 void
-SVSyncCore::sendSyncInterest()
+SVSyncCore::sendSyncInterest(bool isStateVectorHash)
 {
   if (!m_initialized)
     return;
@@ -251,7 +295,12 @@ SVSyncCore::sendSyncInterest()
   ndn::Block vvWire;
   {
     std::lock_guard<std::mutex> lock(m_vvMutex);
-    vvWire = m_vv.encode();
+    if(isStateVectorHash){
+      vvWire = m_vv.encodeAsStateVectorHash();
+    }else{
+      vvWire = m_vv.encode();
+    }
+    
 
     // Add parameters digest
     if (m_getExtraBlock)
@@ -366,7 +415,7 @@ SVSyncCore::updateSeqNo(const SeqNo& seq, const NodeID& nid)
   }
 
   if (seq > prev)
-    retxSyncInterest(false, 1);
+    retxSyncInterest(false, 1, true);
 }
 
 std::set<NodeID>

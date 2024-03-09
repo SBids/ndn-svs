@@ -44,6 +44,10 @@ public:
   ndn::Block
   encode() const;
 
+  /** Encode the version vector to a string */
+  ndn::Block
+  encodeAsStateVectorHash() const;
+
   /** Get a human-readable representation */
   std::string
   toStr() const;
@@ -82,8 +86,73 @@ public:
 
 private:
   std::map<NodeID, SeqNo> m_map;
+  
+  // Hash string into a 32-bit size_t
+  boost::hash<std::string> URI_hash;
+};
+
+class VersionVectorHash
+{
+public:
+  class Error : public std::runtime_error
+  {
+  public:
+    using std::runtime_error::runtime_error;
+  };
+
+  using const_iterator = std::map<std::size_t, SeqNo>::const_iterator;
+
+  VersionVectorHash() = default;
+
+  /** Decode a version vector from ndn::Block */
+  explicit
+  VersionVectorHash(const ndn::Block& encoded);
+
+  /** Encode the version vector to a string */
+  ndn::Block
+  encode() const;
+
+  /** Get a human-readable representation */
+  std::string
+  toStr() const;
+
+  SeqNo
+  set(const std::size_t& hash, SeqNo seqNo)
+  {
+    m_map[hash] = seqNo;
+    return seqNo;
+  }
+
+  SeqNo
+  get(const std::size_t& hash) const
+  {
+    auto elem = m_map.find(hash);
+    return elem == m_map.end() ? 0 : elem->second;
+  }
+
+  const_iterator
+  begin() const noexcept
+  {
+    return m_map.begin();
+  }
+
+  const_iterator
+  end() const noexcept
+  {
+    return m_map.end();
+  }
+
+  bool
+  has(const std::size_t& hash) const
+  {
+    return m_map.find(hash) != end();
+  }
+
+private:
+  std::map<std::size_t, SeqNo> m_map;
 };
 
 } // namespace ndn::svs
+
 
 #endif // NDN_SVS_VERSION_VECTOR_HPP

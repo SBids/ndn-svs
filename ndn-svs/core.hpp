@@ -27,6 +27,8 @@
 #include <atomic>
 #include <mutex>
 
+#include <boost/functional/hash.hpp>
+
 namespace ndn::svs {
 
 class MissingDataInfo
@@ -182,7 +184,7 @@ NDN_SVS_PUBLIC_WITH_TESTS_ELSE_PRIVATE:
    * @param delay Delay in milliseconds to schedule next interest (0 for default).
    */
   void
-  retxSyncInterest(bool send, unsigned int delay);
+  retxSyncInterest(bool send, unsigned int delay, bool isStateVectorHash = false);
 
   /**
    * @brief Add one sync interest to queue.
@@ -191,7 +193,7 @@ NDN_SVS_PUBLIC_WITH_TESTS_ELSE_PRIVATE:
    * number with updateSeqNo()
    */
   void
-  sendSyncInterest();
+  sendSyncInterest(bool isStateVectorHash = false);
 
   /**
    * @brief Merge state vector into the current
@@ -291,6 +293,12 @@ private:
 
   // Prevent sending interests before initialization
   bool m_initialized = false;
+
+  // Hash string into a 32-bit size_t
+  boost::hash<std::string> URI_hash;
+
+  // map for Hash->Name
+  std::map<std::size_t,ndn::Name> hashNameMap;
 };
 
 } // namespace ndn::svs

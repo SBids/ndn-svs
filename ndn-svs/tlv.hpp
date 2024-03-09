@@ -12,6 +12,9 @@ enum : uint32_t {
   MappingData         = 205,
   MappingEntry        = 206,
   StateVectorLzma     = 211,
+  StateVectorHash     = 212,
+  StateVectorHashEntry     = 213,
+  Hash     = 214,
 };
 
 } // namespace ndn::svs::tlv
